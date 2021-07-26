@@ -1,0 +1,171 @@
+#+TITLE: emacs-lldb-voltron lldb inside emacs using voltron inside a tmux session for display
+#+AUTHOR: rileyrg
+#+EMAIL: rileyrg at g m x dot de
+
+#+LANGUAGE: en
+#+STARTUP: showall
+
+#+EXPORT_FILE_NAME: README.md
+#+OPTIONS: toc:8 num:nil
+
+#+category: emacs
+#+FILETAGS: :elisp:lldb:tmux:voltorn:emacs:github:
+
+#+PROPERTY: header-args:emacs-lisp :tangle lldb-voltron.el :tangle-mode (identity #o644)
+#+PROPERTY: header-args:bash :tangle-mode (identity #o655)
+
+* emacs-lldb-voltron
+:PROPERTIES:
+:ID:       fbe3e2ca-9a45-459f-9c17-a44f52cf1b57
+:END:
+lldb interface in emacs hosted in a [[https://github.com/akermu/emacs-libvterm][vterm]]. The source/stack etc is displayed using a [[https://github.com/tmux/tmux][tmux]] session set up to run [[https://github.com/snare/voltron][voltron]] scripts which get updated
+dynamically by [[https://lldb.llvm.org/use/map.html][lldb]]. The scripts used are maintained in a sister project located [[https://github.com/rileyrg/linux-init][here]].
+
+** Images
+[[file:images/emacs-lldb-voltron.png]]
+
+** Video
+
+A quick video showing a small test project, overflow, its .lldbinit and then launching the lldb interface from the overflow.c file using the keybindings documented [[id:d99af12a-7fe6-4d0f-a1ca-e07f89f444bd][below]]. We hop over to the
+tmux hosting terminal and swap tmux windows and panes configured [[id:83ecb7f3-5484-4636-a3e8-11b1195d851d][here]]
+
+[[https://www.youtube.com/watch?v=6-2_pi-FuU8]]
+
+** lldb-voltron.el
+
+link : [[file:lldb-voltron.el][lldb-voltron.el]]
+
+Code to launch a lldb session in a vterm and a terminal with a tmux session holding various voltron snippets which talk to lldb for the debugger output UI.
+
+*** customisation
+:PROPERTIES:
+:ID:       4a039b9d-e0fc-4dcb-bdc2-a950ac57f088
+:END:
+#+begin_src emacs-lisp
+  (defgroup rgr/llvm  nil
+    "llvm options"
+    :group 'rgr)
+
+  (defcustom rgr/lldb-ui-command "lldb-ui"
+    "the ui/voltron command"
+    :type 'string
+    :group 'rgr/llvm)
+  (defcustom rgr/lldb-voltron-buffer-name "vterm-lldb-voltron"
+    "the ui/voltron buffer base name"
+    :type 'string
+    :group 'rgr/llvm)
+  #+end_src
+*** rgr/lldb-mode
+minor mode to talk to an llvm console in vterm
+  #+begin_src emacs-lisp
+    (define-minor-mode rgr/lldb-mode "my lldb mode" :lighter "lldb"
+      :keymap '(
+                ( [f10]   . (lambda()(interactive)(process-send-string (current-buffer) "thread step-over\n")))
+                ( [f11]   . (lambda()(interactive)(process-send-string (current-buffer) "thread step-in\n")))
+                ( [S-f11] . (lambda()(interactive)(process-send-string (current-buffer) "thread step-out\n")))
+                ( [f12]  . (lambda()(interactive)(process-send-string (current-buffer) "thread step-inst\n")))))
+
+  #+end_src
+*** rgr/lldb-voltron-vterm
+:PROPERTIES:
+:ID:       d99af12a-7fe6-4d0f-a1ca-e07f89f444bd
+:END:
+  #+begin_src emacs-lisp
+    (defun rgr/lldb-voltron-vterm(dir)
+      "Run a vterm with lldb for the current buffer's directory, default DIR. Launch a lldb-ui instance unless prefix arg."
+      (interactive "DDirectory:")
+      (let* ((session-name (file-name-nondirectory(directory-file-name dir)))
+             (lldb-ui-command (format "%s %s %s &" rgr/lldb-ui-command dir session-name))
+             (vterm-buffer-name (format "*%s:%s*" rgr/lldb-voltron-buffer-name session-name)))
+        (if (get-buffer vterm-buffer-name)
+            (switch-to-buffer vterm-buffer-name)
+          (progn
+            (with-current-buffer (vterm)
+              (process-send-string (current-buffer) (format "lldb && tmux kill-session -t %s && exit\n" session-name))
+              (unless current-prefix-arg
+                (call-process-shell-command lldb-ui-command)
+                (process-send-string (current-buffer) "lv\n"))
+              (rgr/lldb-mode))))))
+
+    (use-package projectile
+      :bind
+      (:map projectile-command-map ("D" . rgr/lldb-voltron-vterm))
+      )
+
+  #+end_src
+*** provide
+#+begin_src emacs-lisp
+(provide 'lldb-voltron)
+#+end_src
+** support scripts
+
+*** voltron support scripts
+
+https://github.com/rileyrg/linux-init/tree/master/directories/bin/llvm
+
+**** voltron-source
+
+#+include: ~/bin/llvm/voltron-source src bash
+
+**** voltron-disassembly
+
+#+include: ~/bin/llvm/voltron-disassembly src bash
+
+**** voltron-disassembly-mixed
+
+#+include: ~/bin/llvm/voltron-disassembly-mixed src bash
+
+
+**** voltron-locals
+
+#+include: ~/bin/llvm/voltron-locals src bash
+
+**** voltron-breakpoints
+
+#+include: ~/bin/llvm/voltron-breakpoints src bash
+
+**** voltron-registers
+
+#+include: ~/bin/llvm/voltron-registers src bash
+
+**** voltron-backtrace
+
+#+include: ~/bin/llvm/voltron-backtrace src bash
+
+**** voltron-stack
+
+#+include: ~/bin/llvm/voltron-stack src bash
+
+*** lldb init and loading voltron
+
+https://github.com/rileyrg/linux-init/blob/master/DotFiles/.lldbinit
+
+The important bit is loading voltron support into lldb. This can be done via a [[https://github.com/rileyrg/linux-init/blob/master/DotFiles/.lldbinit][.lldbinit]] file.
+At time of writing this init line create an lv alias to load voltron.
+
+#+begin_src bash
+command alias lv command script import "/home/rgr/.local/lib/python3.9/site-packages/voltron/entry.py"
+#+end_src
+
+This alias is triggered in the [[id:d99af12a-7fe6-4d0f-a1ca-e07f89f444bd][elisp]] above.
+
+The full [[https://github.com/rileyrg/linux-init/blob/master/DotFiles/.lldbinit][.lldbinit]] file I use
+
+#+include: ~/.lldbinit src config
+
+*** lldb-ui-session
+:PROPERTIES:
+:ID:       83ecb7f3-5484-4636-a3e8-11b1195d851d
+:END:
+[[https://github.com/rileyrg/linux-init/blob/master/directories/bin/llvm/lldb-ui-session][lldb-ui-session]] creates  a tmux session which you later attach to a terminal:
+It utilises a suite of small [[https://github.com/rileyrg/linux-init/tree/master/directories/bin/llvm][voltron snippets]].
+
+#+include: ~/bin/llvm/lldb-ui-session src emacs-lisp
+
+*** lldb-ui
+
+[[https://github.com/rileyrg/linux-init/blob/master/directories/bin/llvm/lldb-ui][lldb-ui]] attaches to a lldb-ui-session:
+
+#+include: ~/bin/llvm/lldb-ui src emacs-lisp
+
+I use [[https://github.com/rileyrg/linux-init/blob/master/directories/bin/oneterminal][OneTerminal]] which moves to an existing window if already open. Its coded to use sway but obviously you can replace this with whatever.
